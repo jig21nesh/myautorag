@@ -150,4 +150,4 @@ Feel free to open issues or PRs!
 
 📜 License
 
-MIT © Your Name
+MIT © Jiggy Kakkad
