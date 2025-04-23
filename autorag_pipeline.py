@@ -1,77 +1,102 @@
-# autorag_pipeline.py
+import json
+import pathlib
+from typing import Optional, Dict, Any, List
 
-
-import json # <-- Add this import
-import pathlib # <-- Add this import
-from typing import Dict, Any
 from greedy_search import GreedyAutoRAG
 from pdf_loader import PDFChunker
+from azure_index_loader import AzureIndexLoader
 from embedder import Embedder
 from qa_generator import QAGenerator
+from langchain.schema import Document
+
 
 class AutoRAGPipeline:
     """
-    Orchestrates the AutoRAG flow:
-      1) In __init__: chunk & embed the PDF, build ground truth QA,
-         then run greedy optimisation to pick the best modules.
-      2) In __call__: run the optimised pipeline on a new question,
-         returning the answer, the prompt used, and the raw retrieved
-         contexts (for evaluation).
+    Two separate flows:
+      • build_index()  → chunk or load index + QA gen only
+      • ask_via_pdf() / ask_via_index() → load GT + optimize + answer
     """
-    def __init__(self, pdf_path: str):
+
+    def __init__(self, pipeline):
+        # private ctor: pipeline is the dict of best‐inferred modules
+        self.pipeline = pipeline
+
+    @classmethod
+    def build_from_pdf(cls, pdf_path: str, qa_per_chunk: int = 2, overwrite: bool = False) -> None:
+        """
+        1) chunk & embed PDF
+        2) generate QA ground truth and save ground_truth.json
+        (no optimisation)
+        """
         gt_path = pathlib.Path("ground_truth.json")
-        gt = None # Initialize gt
+        if gt_path.exists() and not overwrite:
+            print(f"✅ ground_truth.json already exists (use --overwrite to rebuild).")
+            return
+        print("📄 Chunking PDF…")
+        chunks = PDFChunker(pdf_path).load_chunks()
+        print("🔌 Embedding chunks…")
+        Embedder().ingest(chunks)
+        print("✍️ Generating QA ground truth…")
+        QAGenerator(qa_per_chunk=qa_per_chunk).build_ground_truth(chunks)
+        print("✅ build complete.")
 
-        if gt_path.exists():
-            print(f"Loading existing ground truth from: {gt_path}")
-            try:
-                with gt_path.open("r") as f:
-                    gt = json.load(f)
-                # Basic validation: Check if it's a list (common format)
-                if not isinstance(gt, list):
-                    print(f"Warning: Content in {gt_path} is not a list. Attempting generation.")
-                    gt = None # Reset gt to trigger generation
-            except json.JSONDecodeError:
-                print(f"Error decoding JSON from {gt_path}. Will regenerate.")
-                gt = None # Reset gt to trigger generation
-            except Exception as e:
-                print(f"Error loading {gt_path}: {e}. Will regenerate.")
-                gt = None # Reset gt to trigger generation
+    @classmethod
+    def build_from_index(cls, index_name: str, qa_per_chunk: int = 2, overwrite: bool = False) -> None:
+        """
+        1) load chunks from Azure Search
+        2) generate QA ground truth (same format)
+        """
+        gt_path = pathlib.Path("ground_truth.json")
+        if gt_path.exists() and not overwrite:
+            print(f"✅ ground_truth.json already exists (use --overwrite to rebuild).")
+            return
+        print(f"🔍 Loading chunks from index '{index_name}'…")
+        chunks = AzureIndexLoader(index_name).load_chunks()
+        print("✍️ Generating QA ground truth…")
+        QAGenerator(qa_per_chunk=qa_per_chunk).build_ground_truth(chunks)
+        print("✅ build complete.")
 
-        # If gt is still None (file didn't exist or failed to load/validate)
-        if gt is None:
-            print(f"Ground truth file not found or invalid. Processing PDF and generating ground truth...")
-            # Perform chunking, embedding, and GT generation only if the file doesn't exist or was invalid
-            chunks = PDFChunker(pdf_path).load_chunks()
-            Embedder().ingest(chunks) # Assumes embeddings should also be fresh if GT is generated
-            gt = QAGenerator().build_ground_truth(chunks) # This saves the file for next time
+    @classmethod
+    def ask_via_pdf(cls, pdf_path: str, qa_per_chunk: int = 2) -> "AutoRAGPipeline":
+        """
+        1) ensure ground_truth.json exists (or build it)
+        2) optimize the pipeline
+        """
+        if not pathlib.Path("ground_truth.json").exists():
+            cls.build_from_pdf(pdf_path, qa_per_chunk=qa_per_chunk)
+        with open("ground_truth.json") as f:
+            gt = json.load(f)
+        print(f"🚀 Optimising pipeline on {len(gt)} GT entries…")
+        best_pipeline = GreedyAutoRAG(gt).optimise()
+        print("✅ optimisation done.")
+        return cls(best_pipeline)
 
-        # Ensure gt is valid before proceeding
-        if not gt or not isinstance(gt, list):
-             raise RuntimeError("Failed to load or generate valid ground truth data.")
-
-        # Proceed with optimisation using the loaded or generated ground truth
-        print(f"Optimising pipeline using {len(gt)} ground truth entries...")
-        self.pipeline = GreedyAutoRAG(gt).optimise()
-        print("Optimisation complete.")
+    @classmethod
+    def ask_via_index(cls, index_name: str, qa_per_chunk: int = 2) -> "AutoRAGPipeline":
+        """
+        1) ensure ground_truth.json exists (or build it via index)
+        2) optimize the pipeline
+        """
+        if not pathlib.Path("ground_truth.json").exists():
+            cls.build_from_index(index_name, qa_per_chunk=qa_per_chunk)
+        with open("ground_truth.json") as f:
+            gt = json.load(f)
+        print(f"🚀 Optimising pipeline on {len(gt)} GT entries…")
+        best_pipeline = GreedyAutoRAG(gt).optimise()
+        print("✅ optimisation done.")
+        return cls(best_pipeline)
 
     def __call__(self, question: str) -> Dict[str, Any]:
-        expanded_query = self.pipeline["query_expansion"](question)
-
-        docs = self.pipeline["retrieval"](expanded_query, k=10)
-        retrieved_texts = [doc.page_content for doc in docs]
-
-        aug_docs = self.pipeline["augmentation"](docs)
-
-        reranked_docs = self.pipeline["reranker"](question, aug_docs, top_k=5)
-
-        prompt = self.pipeline["prompt_maker"](question, reranked_docs)
-
-        answer, _ = self.pipeline["generator"](prompt, reranked_docs)
-
+        q2 = self.pipeline["query_expansion"](question)
+        docs = self.pipeline["retrieval"](q2, k=10)
+        texts = [d.page_content for d in docs]
+        docs2 = self.pipeline["augmentation"](docs)
+        docs3 = self.pipeline["reranker"](question, docs2, top_k=5)
+        prompt = self.pipeline["prompt_maker"](question, docs3)
+        answer, _ = self.pipeline["generator"](prompt, docs3)
         return {
-            "question":            question,
-            "answer":              answer,
-            "prompt":              prompt,
-            "retrieved_contexts":  retrieved_texts,
+            "question": question,
+            "prompt": prompt,
+            "retrieved_contexts": texts,
+            "answer": answer,
         }

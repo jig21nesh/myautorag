@@ -1,55 +1,63 @@
 # cli.py
-"""
-Usage
-=====
-# 1. Ingest PDF, embed chunks, build ground-truth QA
-python cli.py build --pdf ./data/my_corpus.pdf
-
-# 2. Optimise pipeline and answer a question
-python cli.py ask  --pdf ./data/my_corpus.pdf --q "What is the warranty period?"
-"""
-
-
-
 
 import argparse
+import sys
 from pathlib import Path
 
-# --- common helpers (no heavy retrieval logic) -----------------------------
-from pdf_loader import PDFChunker
-from embedder import Embedder
-from qa_generator import QAGenerator
+from autorag_pipeline import AutoRAGPipeline
+from config import settings
 
-# ---------------------------------------------------------------------------
-ap = argparse.ArgumentParser(description="AutoRAG demo CLI")
-ap.add_argument("command", choices=["build", "ask"],
-                help="build = ingest & QA | ask = optimise & query")
-ap.add_argument("--pdf", required=True, type=Path,
-                help="Path to the source PDF used for both modes")
-ap.add_argument("--q", help="User question (ask mode only)")
-args = ap.parse_args()
 
-if args.command == "build":
-    # 1 · load & split PDF
-    chunks = PDFChunker(str(args.pdf)).load_chunks()
+def main():
+    parser = argparse.ArgumentParser(prog="cli.py")
+    sub = parser.add_subparsers(dest="cmd", required=True)
 
-    # 2 · embed into PGVector
-    Embedder().ingest(chunks)
+    # --- BUILD subcommand ---
+    build = sub.add_parser("build", help="Create ground truth & index")
+    grp_b = build.add_mutually_exclusive_group(required=True)
+    grp_b.add_argument("--pdf", type=Path,
+                       help="Path to PDF file to chunk & index")
+    grp_b.add_argument("--index-name", type=str,
+                       help="Azure Search index name to read from")
 
-    # 3 · create ground‑truth question/answer pairs
-    QAGenerator().build_ground_truth(chunks)
+    # --- ASK subcommand ---
+    ask = sub.add_parser("ask", help="Optimize pipeline & answer")
+    grp_a = ask.add_mutually_exclusive_group(required=True)
+    grp_a.add_argument("--pdf", type=Path,
+                       help="Path to PDF file (if reusing local index)")
+    grp_a.add_argument("--index-name", type=str,
+                       help="Azure Search index name to query")
+    ask.add_argument("--q", "--question", dest="question", required=True,
+                     help="The question to ask")
 
-    print("Build finished: chunks embedded + GT generated")
+    args = parser.parse_args()
 
-elif args.command == "ask":
-    if not args.q:
-        raise SystemExit("Error: --q 'question' is required in ask mode")
+    if args.cmd == "build":
+        if args.pdf:
+            AutoRAGPipeline.build_from_pdf(str(args.pdf))
+        else:
+            # Azure‐index mode; endpoint is drawn from config.AZURE_SEARCH_ENDPOINT
+            if not settings.AZURE_SEARCH_ENDPOINT:
+                sys.exit("ERROR: AZURE_SEARCH_ENDPOINT not set in config")
+            AutoRAGPipeline.build_from_index(
+                index_name=args.index_name,
+                qa_per_chunk=settings.QA_PER_CHUNK,
+            )
 
-    # --- lazy import to avoid retrieval modules during 'build' --------------
-    from autorag_pipeline import AutoRAGPipeline
+    elif args.cmd == "ask":
+        if args.pdf:
+            pipeline = AutoRAGPipeline.ask_via_pdf(str(args.pdf))
+        else:
+            if not settings.AZURE_SEARCH_ENDPOINT:
+                sys.exit("ERROR: AZURE_SEARCH_ENDPOINT not set in config")
+            pipeline = AutoRAGPipeline.ask_via_index(
+                index_name=args.index_name,
+            )
+        out = pipeline(args.question)
+        print("\n➤ PROMPT\n", out["prompt"])
+        print("\n➤ CONTEXTS\n", *out["retrieved_contexts"], sep="\n\n---\n\n")
+        print("\n➤ ANSWER\n", out["answer"])
 
-    pipeline = AutoRAGPipeline(pdf_path=str(args.pdf))   # runs greedy optimisation internally
-    result = pipeline(args.q)
 
-    print("\nAnswer:\n", result["answer"])
-    print("\nPrompt used:\n", result["prompt"])
+if __name__ == "__main__":
+    main()
