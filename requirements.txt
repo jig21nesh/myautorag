@@ -1,0 +1,24 @@
+# core LangChain + OpenAI
+langchain
+langchain-community
+langchain-openai
+openai
+
+# vector store / PostgreSQL
+psycopg2-binary
+pgvector          # Python pgvector client
+
+# evaluation / metrics
+ragas
+tqdm              # progress bars for optimiser
+
+# PDF loading & text‑split support
+pypdf             # backend for PyPDFLoader
+python-docx       # some loaders rely on it (safe to leave)
+
+# config / env management
+pydantic
+python-dotenv     # optional: load .env files
+
+# typing helpers (optional but harmless)
+typing_extensions
