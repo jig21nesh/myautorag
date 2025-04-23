@@ -51,10 +51,10 @@ pip install -r requirements.txt
 
 ## Configuration
 
-All hyper‑parameters and file paths live in config.py (via Pydantic Settings).
-	•	CHUNK_SIZE, CHUNK_OVERLAP: controls PDF chunking.
-	•	QA_PER_CHUNK: number of synthetic QA to generate per chunk.
-	•	COLLECTION: PGVector collection name.
+- All hyper‑parameters and file paths live in config.py (via Pydantic Settings).
+- CHUNK_SIZE, CHUNK_OVERLAP: controls PDF chunking.
+- QA_PER_CHUNK: number of synthetic QA to generate per chunk.
+- COLLECTION: PGVector collection name.
 
 
 
