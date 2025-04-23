@@ -1,4 +1,4 @@
-"""Generate ground‑truth Q‑A pairs per chunk."""
+"""Generate ground-truth Q-A pairs per chunk."""
 import json, pathlib
 from typing import List, Dict
 from langchain_openai import AzureChatOpenAI

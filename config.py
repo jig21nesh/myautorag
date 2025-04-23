@@ -1,4 +1,4 @@
-"""Centralised settings & hyper‑parameters."""
+"""Centralised settings & hyper-parameters."""
 from pathlib import Path
 from pydantic import Field
 from typing import ClassVar, Dict

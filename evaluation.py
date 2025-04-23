@@ -117,7 +117,17 @@ class Evaluator:
                     raise_exceptions=True,
                     run_config=RunConfig(max_workers=1)
                 )
-            return_scores = eval_result.scores[0]
+            
+            
+            per_sample = eval_result.scores
+            avg_ctx = sum(r["context_precision"] for r in per_sample) / len(per_sample)
+            avg_rel = sum(r["answer_relevancy" ] for r in per_sample) / len(per_sample)
+            
+            return_scores = {
+                "context_precision": avg_ctx,
+                "answer_relevancy":  avg_rel,
+            }
+            
             print(f"DEBUG: Evaluation result : {eval_result.scores} and type of the score {type(eval_result.scores)}")
         except Exception as e:
             #print(f"Error during evaluation: {e.with_traceback()}")
