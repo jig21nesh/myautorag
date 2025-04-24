@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     PGVECTOR_URL: str = Field(..., env="PGVECTOR_URL")  # postgresql://user:pass@host/db
     AZURE_SEARCH_ENDPOINT: str = Field(..., env="AZURE_SEARCH_ENDPOINT")
     AZURE_SEARCH_KEY:      str = Field(..., env="AZURE_SEARCH_KEY")
+    OPENAI_API_VERSION: str = Field("2024-02-15-preview", env="OPENAI_API_VERSION")
     COLLECTION: str = "autorag_documents"
     CHUNK_SIZE: int = 1024
     CHUNK_OVERLAP: int = 128
